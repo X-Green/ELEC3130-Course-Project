@@ -1,0 +1,2 @@
+"""PCBA inspection pipeline skeleton."""
+
