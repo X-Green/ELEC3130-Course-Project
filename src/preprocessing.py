@@ -6,8 +6,20 @@ import cv2
 import numpy as np
 
 try:
+    from .freq_filter import (
+        apply_frequency_filter,
+        frequency_difference_image,
+        log_magnitude_spectrum,
+        suppress_reference_periodic_noise,
+    )
     from .models import ImageArray, PipelineConfig, ROIMap, SegmentationResult
 except ImportError:  # pragma: no cover - supports direct script execution
+    from freq_filter import (
+        apply_frequency_filter,
+        frequency_difference_image,
+        log_magnitude_spectrum,
+        suppress_reference_periodic_noise,
+    )
     from models import ImageArray, PipelineConfig, ROIMap, SegmentationResult
 
 
@@ -223,9 +235,53 @@ def enhance_and_segment(
         enhanced_golden,
     )
 
-    board_mask = _create_board_mask(normalized_test)
-    component_mask = _create_component_mask(normalized_test)
-    solder_mask = _create_solder_mask(normalized_test)
+    active_config = config or PipelineConfig()
+    frequency_denoised_test = normalized_test
+    frequency_notch_mask = None
+    notch_metadata: dict[str, object] = {
+        "enabled": active_config.enable_frequency_notch_filter,
+        "active": False,
+        "selected_peak_count": 0,
+    }
+    if active_config.enable_frequency_notch_filter:
+        frequency_denoised_test, notch_metadata, frequency_notch_mask = suppress_reference_periodic_noise(
+            enhanced_golden,
+            normalized_test,
+            min_radius_ratio=active_config.frequency_notch_min_radius_ratio,
+            max_radius_ratio=active_config.frequency_notch_max_radius_ratio,
+            peak_sigma=active_config.frequency_notch_peak_sigma,
+            notch_radius=active_config.frequency_notch_radius,
+            max_peaks=active_config.frequency_notch_max_peaks,
+        )
+
+    board_mask = _create_board_mask(frequency_denoised_test)
+    component_mask = _create_component_mask(frequency_denoised_test)
+    solder_mask = _create_solder_mask(frequency_denoised_test)
+
+    frequency_spectrum = None
+    frequency_highpass = None
+    frequency_bandpass = None
+    frequency_bandpass_difference = None
+    if active_config.enable_frequency_debug:
+        gray_golden_for_frequency = cv2.cvtColor(enhanced_golden, cv2.COLOR_BGR2GRAY)
+        gray_for_frequency = cv2.cvtColor(frequency_denoised_test, cv2.COLOR_BGR2GRAY)
+        frequency_spectrum = log_magnitude_spectrum(gray_for_frequency)
+        frequency_highpass = apply_frequency_filter(
+            gray_for_frequency,
+            filter_name="highpass",
+            cutoff=0.08,
+        )
+        frequency_bandpass = apply_frequency_filter(
+            gray_for_frequency,
+            filter_name="bandpass",
+            cutoff=0.22,
+        )
+        frequency_bandpass_difference = frequency_difference_image(
+            gray_golden_for_frequency,
+            gray_for_frequency,
+            filter_name="bandpass",
+            cutoff=0.22,
+        )
 
     component_mask, solder_mask = _apply_roi_constraints(
         component_mask,
@@ -242,17 +298,35 @@ def enhance_and_segment(
             "Otsu thresholding",
             "Canny edge detection",
             "HSV solder-color segmentation",
+            "FFT log-magnitude spectrum visualization",
+            "FFT high-pass filtering for edge/fine-detail emphasis",
+            "FFT band-pass filtering for component and solder detail emphasis",
+            "FFT band-pass golden/test difference map",
+            "FFT notch filtering for repetitive periodic-noise suppression",
             "morphological opening and closing",
         ],
+        "frequency_domain": {
+            "enabled": active_config.enable_frequency_debug,
+            "notch_filter": notch_metadata,
+            "highpass_cutoff": 0.08,
+            "bandpass_cutoff": 0.22,
+            "purpose": "suppress periodic noise, show fine detail, suppress low-frequency background, and expose local detail changes",
+        },
         "has_roi_map": roi_map is not None,
-        "debug": False if config is None else config.debug,
+        "debug": active_config.debug,
     }
 
     return SegmentationResult(
         enhanced_golden_image=enhanced_golden,
-        enhanced_test_image=normalized_test,
+        enhanced_test_image=frequency_denoised_test,
         board_mask=board_mask,
         component_mask=component_mask,
         solder_mask=solder_mask,
+        frequency_denoised_test_image=frequency_denoised_test,
+        frequency_notch_mask_image=frequency_notch_mask,
+        frequency_spectrum_image=frequency_spectrum,
+        frequency_highpass_image=frequency_highpass,
+        frequency_bandpass_image=frequency_bandpass,
+        frequency_bandpass_difference_image=frequency_bandpass_difference,
         metadata=metadata,
     )

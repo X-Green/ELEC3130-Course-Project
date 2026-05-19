@@ -15,8 +15,8 @@ except ImportError:  # pragma: no cover - supports direct script execution
 def load_image(image_path: str | Path) -> ImageArray:
     """Load an image from disk.
 
-    TODO: Decide whether the project should standardize on RGB or OpenCV BGR.
-    For now this returns the raw OpenCV BGR image array.
+    The pipeline standardizes on OpenCV BGR arrays because all processing
+    modules use OpenCV color conversion constants.
     """
 
     path = Path(image_path)
@@ -94,4 +94,3 @@ def _parse_bbox(value: Any) -> BBox:
         raise ValueError(f"bbox must be [x, y, width, height], got: {value}")
     x, y, width, height = value
     return int(x), int(y), int(width), int(height)
-
