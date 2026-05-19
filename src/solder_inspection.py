@@ -82,15 +82,15 @@ def inspect_solder_joints(
 
         if area < 20:
             continue
-
+        #Classify the defect base on area
         if area < 80:
-            defect_type = "Insufficient Solder"
-        elif area < 250:
-            defect_type = "Possible Solder Defect"
+            defect_type = "minor defect"
+        elif area < 400:
+            defect_type = "moderate defect"
         elif area < 600:
-            defect_type = "Excess Solder"
+            defect_type = "major defect"
         else:
-            defect_type = "Solder Bridge"
+            defect_type = "severe defect"
 
         defects.append({
             "type": defect_type,
