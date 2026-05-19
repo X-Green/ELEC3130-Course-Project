@@ -110,14 +110,14 @@ def inspect_solder_joints(
 
             cv2.circle(result_overlay, (cx_i, cy_i), 10, (0, 0, 255), -1)
 
-        # 9. debug output
-        debug = {
-            "ref": ref_color,
-            "test": test_color,
-            "diff": diff_img,
-            "binary": binary,
-            "morph": morph,
-            "result": result_overlay,
-        }
+    # 9. debug output
+    debug = {
+        "ref": ref_color,
+        "test": test_color,
+        "diff": diff_img,
+        "binary": binary,
+         "morph": morph,
+        "result": result_overlay,
+    }
     
-        return defects, debug
+    return defects, debug
