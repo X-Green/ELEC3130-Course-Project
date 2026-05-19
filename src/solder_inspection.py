@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import cv2
+import numpy as np
+
+ImageArray = np.ndarray
+
 try:
     from .models import DefectCandidate, ImageArray, PipelineConfig, ROIMap, SegmentationResult
 except ImportError:  # pragma: no cover - supports direct script execution
