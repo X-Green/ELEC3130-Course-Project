@@ -121,3 +121,65 @@ def inspect_solder_joints(
     }
     
     return defects, debug
+
+#The test code(for task 4): (place it under morphological.py and this function for use)
+
+import matplotlib.pyplot as plt
+
+def show_results(defects, debug):
+
+
+    print("SOLDER DEFECT REPORT")
+    print(f"Total defects detected: {len(defects)}\n")
+
+    for i, d in enumerate(defects, 1):
+        cx, cy = d["centroid"]
+        print(f"Defect {i}")
+        print(f"Type: {d['type']}")
+        print(f"Area: {d['area']:.2f}")
+        print(f"Centroid: ({cx:.2f}, {cy:.2f})")
+        print("-------------------------------------")
+
+    plt.figure(figsize=(18, 10))
+
+    plt.subplot(231)
+    plt.imshow(cv2.cvtColor(debug["ref"], cv2.COLOR_BGR2RGB))
+    plt.title("Reference Image")
+    plt.axis("off")
+
+    plt.subplot(232)
+    plt.imshow(cv2.cvtColor(debug["test"], cv2.COLOR_BGR2RGB))
+    plt.title("Test Image")
+    plt.axis("off")
+
+    plt.subplot(233)
+    plt.imshow(debug["diff"], cmap="gray")
+    plt.title("Difference")
+    plt.axis("off")
+
+    plt.subplot(234)
+    plt.imshow(debug["binary"], cmap="gray")
+    plt.title("Binary")
+    plt.axis("off")
+
+    plt.subplot(235)
+    plt.imshow(debug["morph"], cmap="gray")
+    plt.title("Morphology Result")
+    plt.axis("off")
+
+    plt.subplot(236)
+    plt.imshow(cv2.cvtColor(debug["result"], cv2.COLOR_BGR2RGB))
+    plt.title("Defect Result (Red Dots)")
+    plt.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+
+    #change the input jpg file here
+    ref = cv2.imread("01.JPG")
+    test = cv2.imread("01_open_circuit_01.jpg")
+
+    defects, debug = inspect_solder_joints(ref, test)
+    show_results(defects, debug)
