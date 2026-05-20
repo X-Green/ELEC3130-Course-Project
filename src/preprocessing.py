@@ -6,8 +6,20 @@ import cv2
 import numpy as np
 
 try:
+    from .freq_filter import (
+        apply_frequency_filter,
+        frequency_difference_image,
+        log_magnitude_spectrum,
+        suppress_reference_periodic_noise,
+    )
     from .models import ImageArray, PipelineConfig, ROIMap, SegmentationResult
 except ImportError:  # pragma: no cover - supports direct script execution
+    from freq_filter import (
+        apply_frequency_filter,
+        frequency_difference_image,
+        log_magnitude_spectrum,
+        suppress_reference_periodic_noise,
+    )
     from models import ImageArray, PipelineConfig, ROIMap, SegmentationResult
 
 
