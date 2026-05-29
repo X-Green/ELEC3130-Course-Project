@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 from pathlib import Path
@@ -17,6 +18,7 @@ DEMO_STRIPE_NOTCH_RADIUS = 16
 
 try:
     from .kicad_synth_dataset import (
+        DEFAULT_BOARD_SOURCES,
         DEFAULT_KICAD_CLI,
         PixelMapper,
         _build_roi_json,
@@ -34,6 +36,7 @@ try:
     )
 except ImportError:  # pragma: no cover - supports direct script execution
     from kicad_synth_dataset import (
+        DEFAULT_BOARD_SOURCES,
         DEFAULT_KICAD_CLI,
         PixelMapper,
         _build_roi_json,
@@ -49,6 +52,50 @@ except ImportError:  # pragma: no cover - supports direct script execution
         _denoise_preserve_edges,
         _match_histogram_color,
     )
+
+
+DEMO_BOARD_CONFIGS: dict[str, dict[str, Any]] = {
+    "board01": {
+        "golden": "data/kicad_synth/golden/board01_top.png",
+        "base_roi": "data/kicad_synth/roi/board01.json",
+        "source_pcb": str(DEFAULT_BOARD_SOURCES["board01"]),
+        "missing_component": "D27",
+        "bridge_component": "D11",
+        "wrong_component": "C48",
+        "story": "dense battery-charger board with LED, diode, and capacitor evidence",
+        "seed": 3130,
+    },
+    "board02": {
+        "golden": "data/kicad_synth/golden/board02_top.png",
+        "base_roi": "data/kicad_synth/roi/board02.json",
+        "source_pcb": str(DEFAULT_BOARD_SOURCES["board02"]),
+        "missing_component": "D41",
+        "bridge_component": "D65",
+        "wrong_component": "C14",
+        "story": "sensor board with an LED grid, SMA diode pads, and a large capacitor body",
+        "seed": 3131,
+    },
+    "board03": {
+        "golden": "data/kicad_synth/golden/board03_top.png",
+        "base_roi": "data/kicad_synth/roi/board03.json",
+        "source_pcb": str(DEFAULT_BOARD_SOURCES["board03"]),
+        "missing_component": "D1",
+        "bridge_component": "R1",
+        "wrong_component": "F1",
+        "story": "small three-component holder board used to show the same pipeline on sparse geometry",
+        "seed": 3132,
+    },
+    "board04": {
+        "golden": "data/kicad_synth/golden/board04_top.png",
+        "base_roi": "data/kicad_synth/roi/board04.json",
+        "source_pcb": str(DEFAULT_BOARD_SOURCES["board04"]),
+        "missing_component": "D11",
+        "bridge_component": "L6",
+        "wrong_component": "C49",
+        "story": "embedded development board with LED, inductor pad bridge, and capacitor mismatch evidence",
+        "seed": 3133,
+    },
+}
 
 
 def _load_image(path: Path) -> np.ndarray:
@@ -323,7 +370,10 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _rel(path: Path, root: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _metric(report: dict[str, Any], key: str, default: Any = "") -> Any:
@@ -517,7 +567,16 @@ def _ensure_compound_defect_assets(args: argparse.Namespace, case_dir: Path, gol
     existing_roi = Path(args.roi) if args.roi else None
     if existing_test is not None and existing_roi is not None:
         roi_json = _read_json(existing_roi)
-        return existing_test, existing_roi, roi_json, {"case_id": "custom_override"}
+        return existing_test, existing_roi, roi_json, {
+            "case_id": "custom_override",
+            "board_id": getattr(args, "board_id", "custom"),
+            "board_story": getattr(args, "board_story", "custom pre-rendered qualitative case"),
+            "missing_component": getattr(args, "missing_component", "custom"),
+            "bridge_component": getattr(args, "bridge_component", "custom"),
+            "wrong_component": getattr(args, "wrong_component", "custom"),
+            "wrong_component_original": "custom",
+            "wrong_component_replacement": "custom visual body replacement",
+        }
 
     source_pcb = Path(args.source_pcb)
     parsed = parse_board(source_pcb)
@@ -536,8 +595,9 @@ def _ensure_compound_defect_assets(args: argparse.Namespace, case_dir: Path, gol
         image_height=image_height,
     )
 
+    board_id = str(getattr(args, "board_id", "board01"))
     case_id = (
-        f"board01_compound_{args.missing_component}_missing_"
+        f"{board_id}_compound_{args.missing_component}_missing_"
         f"{args.bridge_component}_bridge_{args.wrong_component}_wrong"
     )
     variant_board = case_dir / f"{case_id}.kicad_pcb"
@@ -588,6 +648,7 @@ def _ensure_compound_defect_assets(args: argparse.Namespace, case_dir: Path, gol
     roi_json["solder_joints"] = bridge_joints
     roi_json["metadata"] = {
         "variant": "compound_missing_bridge_wrong_component",
+        "board_id": board_id,
         "missing_component": missing_component.reference,
         "missing_component_footprint": missing_component.footprint,
         "bridge_component": bridge_component.reference,
@@ -600,11 +661,18 @@ def _ensure_compound_defect_assets(args: argparse.Namespace, case_dir: Path, gol
     _write_json(roi_path, roi_json)
     metadata = {
         "case_id": case_id,
+        "board_id": board_id,
+        "board_story": getattr(args, "board_story", ""),
+        "source_pcb": str(source_pcb),
+        "golden_path": str(golden_path),
+        "roi_path": str(roi_path),
         "missing_component": missing_component.reference,
+        "missing_component_footprint": missing_component.footprint,
         "bridge_component": bridge_component.reference,
+        "bridge_component_footprint": bridge_component.footprint,
         "wrong_component": wrong_component.reference,
         "wrong_component_original": wrong_component.footprint,
-        "wrong_component_replacement": "Resistor_SMD:R_0603_1608Metric 3D body",
+        "wrong_component_replacement": "resistor-style 3D/body replacement",
         "bridge_bbox": bridge_bbox,
     }
     return base_defect, roi_path, roi_json, metadata
@@ -754,20 +822,27 @@ def _build_payload(
     missing_component = str(case_metadata["missing_component"])
     bridge_component = str(case_metadata["bridge_component"])
     wrong_component = str(case_metadata["wrong_component"])
+    board_id = str(case_metadata.get("board_id", "board01"))
+    board_story = str(case_metadata.get("board_story", "single-board qualitative case"))
+    missing_footprint = str(case_metadata.get("missing_component_footprint", "component"))
+    bridge_footprint = str(case_metadata.get("bridge_component_footprint", "two-pad component"))
+    wrong_original = str(case_metadata.get("wrong_component_original", "component"))
+    wrong_replacement = str(case_metadata.get("wrong_component_replacement", "resistor-style body"))
+    report_rel = _rel(case_dir / "report.json", output_root)
 
     stages = [
         {
             "title": "1. Disturbed Input",
             "function": "run_pipeline(golden, disturbed_test, roi)",
-            "point": f"The test image is one PCB photo-like image with strong perspective shift, textured background, uneven illumination, color cast, motion blur, sensor noise, periodic noise, JPEG compression, and three local defects: {missing_component} missing with pads retained, a solder bridge on {bridge_component}, and {wrong_component} rendered with a resistor body.",
+            "point": f"The test image is one photo-like {board_id} PCB image ({board_story}) with strong perspective shift, textured background, uneven illumination, color cast, motion blur, sensor noise, periodic noise, JPEG compression, and three local defects: {missing_component} missing with pads retained, a solder bridge on {bridge_component}, and {wrong_component} rendered with a resistor-style body.",
             "inputs": ["Golden reference board", "One disturbed compound-defect test image", "Demo ROI JSON for all three local defects"],
             "outputs": ["Loaded BGR arrays", "ROI map in golden coordinates"],
             "images": [
                 _image_item("Golden reference", case_dir / "input_golden.png", output_root, "Clean reference image."),
-                _image_item("Missing LED reference", case_dir / "missing_led_golden_crop.png", output_root, f"Reference crop around {missing_component}; the LED body is present."),
+                _image_item("Missing component reference", case_dir / "missing_led_golden_crop.png", output_root, f"Reference crop around {missing_component}; the expected {missing_footprint} body is present."),
                 _image_item("Missing LED defect", case_dir / "missing_led_base_crop.png", output_root, f"{missing_component} body is invisible, but pads and board features are retained."),
                 _image_item("Solder bridge defect", case_dir / "solder_bridge_base_crop.png", output_root, f"Bridge drawn between the two {bridge_component} pad ROIs."),
-                _image_item("Wrong component defect", case_dir / "wrong_component_base_crop.png", output_root, f"{wrong_component} keeps its pads and location, but its 3D body is rendered as a resistor."),
+                _image_item("Wrong component defect", case_dir / "wrong_component_base_crop.png", output_root, f"{wrong_component} keeps its pads and location, but its 3D/body appearance is changed to {wrong_replacement}."),
                 _image_item("Base defect before disturbance", case_dir / "input_base_defect.png", output_root, "Compound defect render before camera and appearance perturbations."),
                 _image_item("Camera perspective and offset", case_dir / "input_camera_transform.png", output_root, "Board projected onto a textured background with clear translation and perspective distortion."),
                 _image_item("Lighting and color cast", case_dir / "input_lighting_color.png", output_root, "Uneven illumination and warm camera white-balance shift."),
@@ -777,8 +852,8 @@ def _build_payload(
                 ["Perturbations", "perspective, translation, textured background, illumination gradient, color cast, motion blur, Gaussian noise, salt/pepper noise, periodic bands, JPEG"],
                 ["Expected defects", "missing_component, solder_bridge, wrong_component"],
                 ["Missing component", missing_component],
-                ["Solder bridge component", bridge_component],
-                ["Wrong component", f"{wrong_component}: capacitor body replaced by resistor body"],
+                ["Solder bridge component", f"{bridge_component}: {bridge_footprint}"],
+                ["Wrong component", f"{wrong_component}: {wrong_original} changed to {wrong_replacement}"],
                 ["ROI file", _rel(roi_path, output_root)],
                 ["ROI contents", f"{len(roi_json.get('components', []))} component ROI, {len(roi_json.get('solder_joints', []))} solder joint ROIs"],
             ],
@@ -867,10 +942,10 @@ def _build_payload(
             "inputs": ["Golden/test ROI crops", "Component mask", "Solder mask"],
             "outputs": ["Component candidates", "Solder candidates"],
             "images": [
-                _image_item("Golden LED crop", case_dir / "missing_led_golden_crop.png", output_root, "The expected component body inside the ROI."),
-                _image_item("Aligned missing LED crop", case_dir / "missing_led_aligned_crop.png", output_root, "After registration, the same ROI shows retained pads but no LED body."),
-                _image_item("Wrong component reference", case_dir / "wrong_component_golden_crop.png", output_root, f"Golden {wrong_component} capacitor body."),
-                _image_item("Wrong component aligned", case_dir / "wrong_component_aligned_crop.png", output_root, f"Aligned test crop with {wrong_component} rendered as a resistor body."),
+                _image_item("Golden component crop", case_dir / "missing_led_golden_crop.png", output_root, "The expected component body inside the ROI."),
+                _image_item("Aligned missing crop", case_dir / "missing_led_aligned_crop.png", output_root, "After registration, the same ROI shows retained pads but no component body."),
+                _image_item("Wrong component reference", case_dir / "wrong_component_golden_crop.png", output_root, f"Golden {wrong_component} original body."),
+                _image_item("Wrong component aligned", case_dir / "wrong_component_aligned_crop.png", output_root, f"Aligned test crop with {wrong_component} rendered as {wrong_replacement}."),
                 _image_item("Solder bridge aligned", case_dir / "solder_bridge_aligned_crop.png", output_root, f"Aligned test crop around the bridge on {bridge_component}."),
                 _image_item("Component mask", case_dir / "component_mask.png", output_root, "Component-region evidence used by inspect_components()."),
                 _image_item("Intermediate overlay", case_dir / "defect_overlay.png", output_root, "Detected candidates drawn over the aligned image."),
@@ -894,14 +969,14 @@ def _build_payload(
                 _image_item("Final defect overlay", case_dir / "defect_overlay.png", output_root, "Final rule-based labels and bounding boxes."),
                 _image_item("Raw disturbed-vs-golden heatmap", case_dir / "input_disturbance_heatmap.png", output_root, "How different the input looked before registration and normalization."),
                 _image_item("Noise/blur/JPEG input", case_dir / "input_noise_blur_jpeg.png", output_root, "Final disturbance stack before the registration stage."),
-                _image_item("Aligned missing LED crop", case_dir / "missing_led_aligned_crop.png", output_root, "Local visual proof that the missing LED remains visible after geometric correction."),
+                _image_item("Aligned missing component crop", case_dir / "missing_led_aligned_crop.png", output_root, "Local visual proof that the missing component remains visible after geometric correction."),
                 _image_item("Aligned solder bridge crop", case_dir / "solder_bridge_aligned_crop.png", output_root, "Local bridge evidence after geometric correction."),
                 _image_item("Aligned wrong component crop", case_dir / "wrong_component_aligned_crop.png", output_root, "Local wrong-component evidence after geometric correction."),
             ],
             "metrics": [
                 ["Final defects", str(len(final_defects))],
                 ["Final labels", ", ".join(sorted({item.get("defect_type", "") for item in final_defects})) or "none"],
-                ["Report", "qualitative_case/report.json"],
+                ["Report", report_rel],
             ],
         },
     ]
@@ -1005,15 +1080,15 @@ def _build_payload(
             "kind": "branch",
             "col": 6,
             "row": 1,
-            "point": f"Component ROIs are compared against the golden reference. This branch sees both {missing_component} missing from its retained pads and {wrong_component} changed from a capacitor body to a resistor body.",
+            "point": f"Component ROIs are compared against the golden reference. This branch sees both {missing_component} missing from its retained pads and {wrong_component} changed from {wrong_original} to {wrong_replacement}.",
             "inputs": ["Golden/test component ROI crops", "Component mask", "ROI map"],
             "outputs": ["Component defect candidates"],
             "methods": ["Template correlation", "ROI difference fraction", "Edge-density comparison", "Shift/rotation evidence"],
             "images": [
-                _image_item("Golden LED crop", case_dir / "missing_led_golden_crop.png", output_root, "Reference component ROI with LED body present."),
-                _image_item("Aligned missing LED crop", case_dir / "missing_led_aligned_crop.png", output_root, "Registered test ROI with pads retained and body missing."),
-                _image_item("Wrong component reference", case_dir / "wrong_component_golden_crop.png", output_root, "Reference capacitor body inside the ROI."),
-                _image_item("Wrong component aligned", case_dir / "wrong_component_aligned_crop.png", output_root, "Registered test ROI with a resistor body in the same footprint location."),
+                _image_item("Golden component crop", case_dir / "missing_led_golden_crop.png", output_root, "Reference component ROI with the expected body present."),
+                _image_item("Aligned missing component crop", case_dir / "missing_led_aligned_crop.png", output_root, "Registered test ROI with pads retained and body missing."),
+                _image_item("Wrong component reference", case_dir / "wrong_component_golden_crop.png", output_root, "Reference component body inside the ROI."),
+                _image_item("Wrong component aligned", case_dir / "wrong_component_aligned_crop.png", output_root, f"Registered test ROI with {wrong_replacement} in the same footprint location."),
                 _image_item("Component mask", case_dir / "component_mask.png", output_root, "Component-region evidence used by the branch."),
                 _image_item("Intermediate overlay", case_dir / "defect_overlay.png", output_root, "Component candidates are drawn together with any solder candidates."),
             ],
@@ -1093,7 +1168,8 @@ def _build_payload(
     return {
         "case_id": f"qualitative_{case_metadata['case_id']}_disturbed",
         "source_case": str(case_metadata["case_id"]),
-        "golden": "data/kicad_synth/golden/board01_top.png",
+        "board_id": board_id,
+        "golden": _rel(Path(case_metadata.get("golden_path", "")) if case_metadata.get("golden_path") else case_dir / "input_golden.png", output_root),
         "roi": _rel(roi_path, output_root),
         "case_metadata": case_metadata,
         "frequency_metadata": frequency_metadata,
@@ -1486,6 +1562,445 @@ def _html(payload: dict[str, Any]) -> str:
 """
 
 
+def _args_for_board(base_args: argparse.Namespace, board_id: str, board_output_dir: Path) -> argparse.Namespace:
+    if board_id not in DEMO_BOARD_CONFIGS:
+        raise ValueError(f"Unknown board id {board_id}. Available: {', '.join(sorted(DEMO_BOARD_CONFIGS))}")
+    board_config = DEMO_BOARD_CONFIGS[board_id]
+    board_args = copy.copy(base_args)
+    board_args.board_id = board_id
+    board_args.board_story = str(board_config["story"])
+    board_args.golden = str(board_config["golden"])
+    board_args.base_roi = str(board_config["base_roi"])
+    board_args.source_pcb = str(board_config["source_pcb"])
+    board_args.missing_component = str(board_config["missing_component"])
+    board_args.bridge_component = str(board_config["bridge_component"])
+    board_args.wrong_component = str(board_config["wrong_component"])
+    board_args.seed = int(board_config["seed"])
+    board_args.output_dir = str(board_output_dir)
+    board_args.test = None
+    board_args.roi = None
+    return board_args
+
+
+def _apply_single_board_defaults(args: argparse.Namespace) -> argparse.Namespace:
+    if args.board_id not in DEMO_BOARD_CONFIGS:
+        return args
+    defaults = DEMO_BOARD_CONFIGS[args.board_id]
+    if args.golden is None:
+        args.golden = str(defaults["golden"])
+    if args.base_roi is None:
+        args.base_roi = str(defaults["base_roi"])
+    if args.source_pcb is None:
+        args.source_pcb = str(defaults["source_pcb"])
+    if args.missing_component is None:
+        args.missing_component = str(defaults["missing_component"])
+    if args.bridge_component is None:
+        args.bridge_component = str(defaults["bridge_component"])
+    if args.wrong_component is None:
+        args.wrong_component = str(defaults["wrong_component"])
+    if args.seed is None:
+        args.seed = int(defaults["seed"])
+    args.board_story = str(defaults["story"])
+    return args
+
+
+def _gallery_card(board_id: str, output_root: Path, demo_dir: Path, payload: dict[str, Any]) -> str:
+    case_dir = demo_dir / "qualitative_case"
+    report = _read_json(case_dir / "report.json") if (case_dir / "report.json").exists() else {"defects": []}
+    defects = report.get("defects", [])
+    labels = ", ".join(sorted({str(item.get("defect_type", "")) for item in defects if item.get("defect_type")})) or "none"
+    metadata = payload.get("case_metadata", {})
+    preview = _rel(case_dir / "defect_overlay.png", output_root)
+    input_preview = _rel(case_dir / "input_perturbed.png", output_root)
+    link = _rel(demo_dir / "index.html", output_root)
+    story = str(metadata.get("board_story", DEMO_BOARD_CONFIGS.get(board_id, {}).get("story", "")))
+    missing = str(metadata.get("missing_component", ""))
+    bridge = str(metadata.get("bridge_component", ""))
+    wrong = str(metadata.get("wrong_component", ""))
+    return f"""
+      <article class="card">
+        <div class="thumbs">
+          <img src="{input_preview}" alt="{board_id} disturbed input">
+          <img src="{preview}" alt="{board_id} final overlay">
+        </div>
+        <div class="card-body">
+          <h2>{board_id}</h2>
+          <p>{story}</p>
+          <table>
+            <tr><th>Missing</th><td>{missing}</td></tr>
+            <tr><th>Bridge</th><td>{bridge}</td></tr>
+            <tr><th>Mismatch</th><td>{wrong}</td></tr>
+            <tr><th>Final labels</th><td>{labels}</td></tr>
+          </table>
+          <a href="{link}">Open qualitative pipeline tree</a>
+        </div>
+      </article>
+    """
+
+
+def _write_augmentation_examples(output_root: Path) -> str:
+    example_dir = output_root / "augmentation_examples"
+    run_root = output_root / "augmentation_runs"
+    example_dir.mkdir(parents=True, exist_ok=True)
+    run_root.mkdir(parents=True, exist_ok=True)
+    source_candidates = [
+        output_root / "qualitative_case" / "input_base_defect.png",
+        output_root / "board02" / "qualitative_case" / "input_base_defect.png",
+        output_root / "board03" / "qualitative_case" / "input_base_defect.png",
+        output_root / "board04" / "qualitative_case" / "input_base_defect.png",
+    ]
+    source_path = next((path for path in source_candidates if path.exists()), None)
+    if source_path is None:
+        return ""
+    golden_path = output_root / "qualitative_case" / "input_golden.png"
+    roi_path = output_root / "qualitative_case" / "roi_compound_defects.json"
+    if not golden_path.exists() or not roi_path.exists():
+        return ""
+
+    source = _load_image(source_path)
+    height, width = source.shape[:2]
+    rng = np.random.default_rng(4217)
+
+    def save(name: str, image: np.ndarray) -> Path:
+        path = example_dir / name
+        cv2.imwrite(str(path), np.clip(image, 0, 255).astype(np.uint8))
+        return path
+
+    def run_augmented_pipeline(slug: str, image_path: Path) -> dict[str, str]:
+        run_dir = run_root / slug
+        run_dir.mkdir(parents=True, exist_ok=True)
+        result = run_pipeline(
+            golden_path,
+            image_path,
+            roi_path,
+            PipelineConfig(debug=True),
+        )
+        write_visual_outputs(result, run_dir)
+        report = _read_json(run_dir / "report.json")
+        labels = ", ".join(sorted({item.get("defect_type", "") for item in report.get("defects", [])})) or "none"
+        alignment = report.get("alignment", {})
+        return {
+            "input": _rel(image_path, output_root),
+            "overlay": _rel(run_dir / "defect_overlay.png", output_root),
+            "aligned": _rel(run_dir / "aligned_test.png", output_root),
+            "report": _rel(run_dir / "report.json", output_root),
+            "labels": labels,
+            "defect_count": str(len(report.get("defects", []))),
+            "inliers": str(alignment.get("inlier_matches", "")),
+            "edge_iou": _fmt(alignment.get("edge_iou_dilated")),
+        }
+
+    xx = np.linspace(0.58, 1.26, width, dtype=np.float32)[None, :, None]
+    yy = np.linspace(1.10, 0.82, height, dtype=np.float32)[:, None, None]
+    gradient = source.astype(np.float32) * xx * yy
+    gradient_src = save("lighting_gradient.png", gradient)
+
+    grid_y, grid_x = np.indices((height, width), dtype=np.float32)
+    radius = np.sqrt(((grid_x - width * 0.48) / width) ** 2 + ((grid_y - height * 0.42) / height) ** 2)
+    vignette = np.clip(1.22 - 1.35 * radius, 0.52, 1.18)[:, :, None]
+    spotlight_src = save("lighting_spotlight_vignette.png", source.astype(np.float32) * vignette)
+
+    warm = source.astype(np.float32) * np.array([0.82, 0.98, 1.24], dtype=np.float32)[None, None, :]
+    warm += np.array([0.0, 5.0, 16.0], dtype=np.float32)[None, None, :]
+    warm_src = save("lighting_warm_cast.png", warm)
+
+    background = _texture_background(source.shape, 912)
+    source_quad = np.float32([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]])
+    target_quad = np.float32([[72, 34], [width - 115, 12], [width - 42, height - 92], [94, height - 38]])
+    perspective = cv2.warpPerspective(
+        source,
+        cv2.getPerspectiveTransform(source_quad, target_quad),
+        (width, height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_TRANSPARENT,
+        dst=background.copy(),
+    )
+    perspective_src = save("transform_perspective_offset.png", perspective)
+
+    rotation_matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), -7.0, 0.93)
+    rotation_matrix[0, 2] += 56.0
+    rotation_matrix[1, 2] -= 34.0
+    rotated = cv2.warpAffine(
+        source,
+        rotation_matrix,
+        (width, height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(226, 229, 224),
+    )
+    rotated_src = save("transform_rotation_shift.png", rotated)
+
+    zoom_matrix = np.float32([[1.14, 0.0, -width * 0.09], [0.0, 1.14, -height * 0.06]])
+    zoomed = cv2.warpAffine(
+        source,
+        zoom_matrix,
+        (width, height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(226, 229, 224),
+    )
+    zoom_src = save("transform_zoom_pan.png", zoomed)
+
+    gaussian = source.astype(np.float32) + rng.normal(0.0, 14.0, source.shape).astype(np.float32)
+    gaussian_src = save("noise_gaussian_sensor.png", gaussian)
+
+    stripe_x = np.linspace(0.0, 2.0 * np.pi * 42.0, width, dtype=np.float32)[None, :, None]
+    stripes = source.astype(np.float32) + 24.0 * np.sin(stripe_x)
+    stripes_src = save("noise_periodic_stripes.png", stripes)
+
+    impulse = source.copy()
+    salt = rng.random((height, width)) < 0.006
+    pepper = rng.random((height, width)) < 0.005
+    impulse[salt] = 255
+    impulse[pepper] = 0
+    impulse_src = save("noise_salt_pepper.png", impulse)
+
+    examples = [
+        (
+            "Lighting",
+            "Illumination changes test whether color normalization and local contrast enhancement can keep ROI evidence stable.",
+            [
+                ("lighting_gradient", "Gradient shadow", gradient_src, "Strong left-to-right illumination drift plus vertical falloff."),
+                ("lighting_spotlight_vignette", "Spotlight vignette", spotlight_src, "Bright center and dark corners, similar to uneven lab lighting."),
+                ("lighting_warm_cast", "Warm color cast", warm_src, "Channel-dependent white-balance shift from camera or lamp color."),
+            ],
+        ),
+        (
+            "Geometric Transform",
+            "Camera transforms test whether registration can recover the golden coordinate system before ROI comparison.",
+            [
+                ("transform_perspective_offset", "Perspective offset", perspective_src, "Tilted camera view with translation and textured background."),
+                ("transform_rotation_shift", "Rotation and shift", rotated_src, "In-plane board rotation with translation and slight scale change."),
+                ("transform_zoom_pan", "Zoom and pan", zoom_src, "Closer camera view that crops and shifts the board position."),
+            ],
+        ),
+        (
+            "Noise",
+            "Noise examples separate random sensor corruption from structured interference that benefits from frequency filtering.",
+            [
+                ("noise_gaussian_sensor", "Gaussian sensor noise", gaussian_src, "Dense additive noise across all color channels."),
+                ("noise_periodic_stripes", "Periodic stripe noise", stripes_src, "Structured sinusoidal bands with narrow Fourier-domain peaks."),
+                ("noise_salt_pepper", "Salt-and-pepper noise", impulse_src, "Sparse impulse outliers that morphology and denoising should suppress."),
+            ],
+        ),
+    ]
+
+    sections: list[str] = []
+    for title, note, items in examples:
+        rendered_items: list[str] = []
+        for slug, label, image_path, description in items:
+            result = run_augmented_pipeline(slug, image_path)
+            rendered_items.append(
+                f"""
+                <figure>
+                  <figcaption>{label}</figcaption>
+                  <div class="pipeline-pair">
+                    <div>
+                      <span>Input</span>
+                      <img src="{result['input']}" alt="{label} input">
+                    </div>
+                    <div>
+                      <span>Pipeline overlay</span>
+                      <img src="{result['overlay']}" alt="{label} pipeline overlay">
+                    </div>
+                  </div>
+                  <p>{description}</p>
+                  <table>
+                    <tr><th>Final labels</th><td>{result['labels']}</td></tr>
+                    <tr><th>Defects</th><td>{result['defect_count']}</td></tr>
+                    <tr><th>Inliers</th><td>{result['inliers']}</td></tr>
+                    <tr><th>Edge IoU</th><td>{result['edge_iou']}</td></tr>
+                    <tr><th>Report</th><td><a href="{result['report']}">JSON</a></td></tr>
+                  </table>
+                </figure>
+                """
+            )
+        figures = "".join(rendered_items)
+        sections.append(
+            f"""
+            <section class="example-section">
+              <div>
+                <h2>{title}</h2>
+                <p>{note}</p>
+              </div>
+              <div class="example-grid">{figures}</div>
+            </section>
+            """
+        )
+
+    return f"""
+    <section class="examples">
+      <h2>Augmentation Examples With Pipeline Results</h2>
+      <p>These examples use the same PCB render, rerun <code>run_pipeline()</code> for each stress case, and compare the disturbed input with the final defect overlay.</p>
+      {''.join(sections)}
+    </section>
+    """
+
+
+def _gallery_html(cards: list[str], augmentation_examples: str = "") -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Board Qualitative Pipeline Demos</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #202421;
+      background: #f3f4f1;
+      letter-spacing: 0;
+    }}
+    header {{
+      padding: 24px;
+      background: #fff;
+      border-bottom: 1px solid #d8ddd6;
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 27px; line-height: 1.2; }}
+    h2 {{ margin: 0 0 8px; font-size: 20px; }}
+    p {{ margin: 0 0 12px; color: #5e665f; line-height: 1.5; }}
+    main {{
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }}
+    .cards {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }}
+    .card {{
+      background: #fff;
+      border: 1px solid #d8ddd6;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      min-width: 0;
+    }}
+    .thumbs {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: #d8ddd6;
+      min-width: 0;
+    }}
+    img {{
+      width: 100%;
+      height: 260px;
+      display: block;
+      object-fit: contain;
+      background: #eef0ed;
+    }}
+    .card-body {{ padding: 14px; min-width: 0; }}
+    .examples {{
+      background: #fff;
+      border: 1px solid #d8ddd6;
+      padding: 16px;
+      min-width: 0;
+    }}
+    .example-section {{
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 16px;
+      padding-top: 16px;
+      margin-top: 16px;
+      border-top: 1px solid #d8ddd6;
+      min-width: 0;
+    }}
+    .example-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      min-width: 0;
+    }}
+    figure {{
+      margin: 0;
+      border: 1px solid #d8ddd6;
+      background: #eef0ed;
+      min-width: 0;
+    }}
+    figcaption {{
+      padding: 8px;
+      font-weight: 700;
+      background: #fbfcfb;
+      border-bottom: 1px solid #d8ddd6;
+    }}
+    figure p {{
+      padding: 8px;
+      margin: 0;
+      font-size: 13px;
+    }}
+    figure table {{
+      margin: 0;
+      background: #fbfcfb;
+      border-top: 1px solid #d8ddd6;
+    }}
+    figure table th,
+    figure table td {{
+      padding: 6px 8px;
+      font-size: 12px;
+    }}
+    .pipeline-pair {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: #d8ddd6;
+    }}
+    .pipeline-pair div {{
+      min-width: 0;
+      background: #eef0ed;
+    }}
+    .pipeline-pair span {{
+      display: block;
+      padding: 6px 8px;
+      background: #fbfcfb;
+      color: #5e665f;
+      font-size: 12px;
+      border-bottom: 1px solid #d8ddd6;
+    }}
+    .pipeline-pair img {{
+      height: 190px;
+    }}
+    table {{ width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 13px; }}
+    th, td {{ border-bottom: 1px solid #d8ddd6; padding: 7px 0; text-align: left; vertical-align: top; overflow-wrap: anywhere; }}
+    th {{ width: 34%; color: #5e665f; font-weight: 400; }}
+    a {{
+      display: inline-block;
+      color: #0f766e;
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: 1px solid #0f766e;
+    }}
+    @media (max-width: 1200px) {{
+      .cards {{ grid-template-columns: 1fr; }}
+      .example-section {{ grid-template-columns: 1fr; }}
+    }}
+    @media (max-width: 760px) {{
+      .card {{ grid-template-columns: 1fr; }}
+      .thumbs {{ grid-template-columns: 1fr; }}
+      .example-grid {{ grid-template-columns: 1fr; }}
+      .pipeline-pair {{ grid-template-columns: 1fr; }}
+      img {{ height: auto; max-height: 320px; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Multi-Board Qualitative Pipeline Demos</h1>
+    <p>Each PCB has one photo-like compound-defect input and a separate tree view showing the same classical image-processing pipeline.</p>
+  </header>
+  <main>
+    <section class="cards">
+      {''.join(cards)}
+    </section>
+    {augmentation_examples}
+  </main>
+</body>
+</html>
+"""
+
+
 def build_demo(args: argparse.Namespace) -> Path:
     output_root = Path(args.output_dir)
     case_dir = output_root / "qualitative_case"
@@ -1531,36 +2046,99 @@ def build_demo(args: argparse.Namespace) -> Path:
     return html_path
 
 
+def build_all_board_demos(args: argparse.Namespace) -> Path:
+    output_root = Path(args.output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+    selected_boards = args.boards or ["board02", "board03", "board04"]
+    cards: list[str] = []
+    for board_id in selected_boards:
+        board_output_dir = output_root / board_id
+        print(f"Building qualitative demo for {board_id} -> {board_output_dir}")
+        board_args = _args_for_board(args, board_id, board_output_dir)
+        build_demo(board_args)
+        payload = _read_json(board_output_dir / "qualitative_data.json")
+        cards.append(_gallery_card(board_id, output_root, board_output_dir, payload))
+
+    gallery_path = output_root / "multi_board_index.html"
+    gallery_path.write_text(_gallery_html(cards, _write_augmentation_examples(output_root)), encoding="utf-8")
+    print(f"Wrote {gallery_path}")
+    return gallery_path
+
+
+def refresh_gallery(args: argparse.Namespace) -> Path:
+    output_root = Path(args.output_dir)
+    cards: list[str] = []
+    selected_boards = args.boards or ["board02", "board03", "board04"]
+    for board_id in selected_boards:
+        demo_dir = output_root / board_id
+        payload_path = demo_dir / "qualitative_data.json"
+        if not payload_path.exists():
+            raise FileNotFoundError(f"Missing {payload_path}; build that board demo first.")
+        cards.append(_gallery_card(board_id, output_root, demo_dir, _read_json(payload_path)))
+
+    gallery_path = output_root / "multi_board_index.html"
+    gallery_path.write_text(_gallery_html(cards, _write_augmentation_examples(output_root)), encoding="utf-8")
+    print(f"Wrote {gallery_path}")
+    return gallery_path
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build a qualitative one-image pipeline walkthrough.")
-    parser.add_argument("--golden", default="data/kicad_synth/golden/board01_top.png", help="Golden reference image.")
+    parser.add_argument(
+        "--board-id",
+        default="board01",
+        choices=sorted(DEMO_BOARD_CONFIGS),
+        help="Default board profile used when explicit paths/components are not provided.",
+    )
+    parser.add_argument(
+        "--all-boards",
+        action="store_true",
+        help="Build one qualitative demo per selected board instead of only one board.",
+    )
+    parser.add_argument(
+        "--refresh-gallery",
+        action="store_true",
+        help="Regenerate the multi-board gallery and augmentation examples from existing demo outputs.",
+    )
+    parser.add_argument(
+        "--boards",
+        nargs="*",
+        choices=sorted(DEMO_BOARD_CONFIGS),
+        help="Board IDs to build with --all-boards. Defaults to the remaining analysis boards: board02 board03 board04.",
+    )
+    parser.add_argument("--golden", default=None, help="Golden reference image.")
     parser.add_argument("--test", default=None, help="Optional pre-rendered base defect test image override.")
     parser.add_argument("--roi", default=None, help="Optional ROI JSON override. When omitted, a compound-defect demo ROI is generated.")
     parser.add_argument(
         "--source-pcb",
-        default=r"E:\SmartTBBatteryCharger\hardware_test_new_2\SmartTBBatteryChargerNewTest.kicad_pcb",
+        default=None,
         help="Source KiCad PCB used to generate the missing-LED demo variant.",
     )
-    parser.add_argument("--missing-component", default="D27", help="Reference designator to hide as a missing LED/component.")
-    parser.add_argument("--bridge-component", default="D11", help="Reference designator whose two pads receive a visible solder bridge.")
-    parser.add_argument("--wrong-component", default="C48", help="Reference designator rendered with the wrong 3D component body.")
+    parser.add_argument("--missing-component", default=None, help="Reference designator to hide as a missing component.")
+    parser.add_argument("--bridge-component", default=None, help="Reference designator whose two pads receive a visible solder bridge.")
+    parser.add_argument("--wrong-component", default=None, help="Reference designator rendered with the wrong 3D/body appearance.")
     parser.add_argument(
         "--wrong-component-model",
         default="${KICAD9_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl",
         help="3D model path used for the wrong-component body.",
     )
     parser.add_argument("--kicad-cli", default=str(DEFAULT_KICAD_CLI), help="Path to kicad-cli.exe.")
-    parser.add_argument("--base-roi", default="data/kicad_synth/roi/board01.json", help="Existing board01 ROI used for board bbox calibration.")
-    parser.add_argument("--render-width", type=int, default=2400, help="KiCad requested render width for board01.")
-    parser.add_argument("--render-height", type=int, default=1800, help="KiCad requested render height for board01.")
+    parser.add_argument("--base-roi", default=None, help="Existing ROI used for board bbox calibration.")
+    parser.add_argument("--render-width", type=int, default=2400, help="KiCad requested render width.")
+    parser.add_argument("--render-height", type=int, default=1800, help="KiCad requested render height.")
     parser.add_argument("--output-dir", default="outputs/course_pipeline_demo", help="Static demo output directory.")
-    parser.add_argument("--seed", type=int, default=3130, help="Deterministic perturbation seed.")
+    parser.add_argument("--seed", type=int, default=None, help="Deterministic perturbation seed.")
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    build_demo(args)
+    if args.refresh_gallery:
+        refresh_gallery(args)
+    elif args.all_boards:
+        build_all_board_demos(args)
+    else:
+        build_demo(_apply_single_board_defaults(args))
 
 
 if __name__ == "__main__":
