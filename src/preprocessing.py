@@ -1,4 +1,4 @@
-"""Task 2: image enhancement, color normalization, filtering, and segmentation."""
+"""Task 2: image enhancement, color normalization, and filtering."""
 
 from __future__ import annotations
 
@@ -41,12 +41,15 @@ def _ensure_color(img: ImageArray) -> np.ndarray:
     img = _to_uint8(img)
 
     if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    if img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    if img.ndim == 3 and img.shape[2] == 4:
+        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
-    return img
+    if img.ndim == 3 and img.shape[2] == 3:
+        return img
+
+    raise ValueError(f"Unsupported image shape: {img.shape}")
 
 
 def _apply_clahe_color(img: np.ndarray) -> np.ndarray:
@@ -66,20 +69,29 @@ def _apply_clahe_color(img: np.ndarray) -> np.ndarray:
     return enhanced
 
 
+def _denoise_preserve_edges(img: np.ndarray) -> np.ndarray:
+    return cv2.bilateralFilter(
+        img,
+        d=5,
+        sigmaColor=50,
+        sigmaSpace=50,
+    )
+
+
 def _match_histogram_channel(source: np.ndarray, reference: np.ndarray) -> np.ndarray:
     source_shape = source.shape
 
-    source = source.ravel()
-    reference = reference.ravel()
+    source_flat = source.ravel()
+    reference_flat = reference.ravel()
 
     source_values, source_indices, source_counts = np.unique(
-        source,
+        source_flat,
         return_inverse=True,
         return_counts=True,
     )
 
     reference_values, reference_counts = np.unique(
-        reference,
+        reference_flat,
         return_counts=True,
     )
 
@@ -89,13 +101,13 @@ def _match_histogram_channel(source: np.ndarray, reference: np.ndarray) -> np.nd
     reference_quantiles = np.cumsum(reference_counts).astype(np.float64)
     reference_quantiles /= reference_quantiles[-1]
 
-    interp_values = np.interp(
+    matched_values = np.interp(
         source_quantiles,
         reference_quantiles,
         reference_values,
     )
 
-    matched = interp_values[source_indices].reshape(source_shape)
+    matched = matched_values[source_indices].reshape(source_shape)
 
     return np.clip(matched, 0, 255).astype(np.uint8)
 
@@ -112,107 +124,19 @@ def _match_histogram_color(source: np.ndarray, reference: np.ndarray) -> np.ndar
     return matched
 
 
-def _denoise_preserve_edges(img: np.ndarray) -> np.ndarray:
-    return cv2.bilateralFilter(
-        img,
-        d=5,
-        sigmaColor=50,
-        sigmaSpace=50,
-    )
-
-
-def _create_board_mask(img: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    _, mask = cv2.threshold(
-        blurred,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-    )
-
-    white_ratio = np.mean(mask == 255)
-
-    if white_ratio > 0.70:
-        mask = cv2.bitwise_not(mask)
-
-    kernel = np.ones((7, 7), np.uint8)
-
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-    return mask
-
-
-def _create_component_mask(img: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    edges = cv2.Canny(
-        blurred,
-        threshold1=50,
-        threshold2=150,
-    )
-
-    kernel = np.ones((5, 5), np.uint8)
-
-    mask = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.dilate(mask, kernel, iterations=1)
-
-    return mask
-
-
-def _create_solder_mask(img: np.ndarray) -> np.ndarray:
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-    value = hsv[:, :, 2]
-    saturation = hsv[:, :, 1]
-
-    bright_mask = cv2.inRange(value, 180, 255)
-    low_saturation_mask = cv2.inRange(saturation, 0, 90)
-
-    solder_mask = cv2.bitwise_and(bright_mask, low_saturation_mask)
-
-    kernel = np.ones((3, 3), np.uint8)
-
-    solder_mask = cv2.morphologyEx(solder_mask, cv2.MORPH_OPEN, kernel)
-    solder_mask = cv2.morphologyEx(solder_mask, cv2.MORPH_CLOSE, kernel)
-
-    return solder_mask
-
-
-def _apply_roi_constraints(
-    component_mask: np.ndarray,
-    solder_mask: np.ndarray,
-    roi_map: ROIMap | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    if roi_map is None:
-        return component_mask, solder_mask
-
-    constrained_component_mask = np.zeros_like(component_mask)
-    constrained_solder_mask = np.zeros_like(solder_mask)
-
-    for component in roi_map.components:
-        x, y, w, h = component.bbox
-        constrained_component_mask[y:y + h, x:x + w] = component_mask[y:y + h, x:x + w]
-
-    for solder_joint in roi_map.solder_joints:
-        x, y, w, h = solder_joint.bbox
-        constrained_solder_mask[y:y + h, x:x + w] = solder_mask[y:y + h, x:x + w]
-
-    return constrained_component_mask, constrained_solder_mask
-
-
 def enhance_and_segment(
     golden_image: ImageArray,
     aligned_test_image: ImageArray,
     roi_map: ROIMap | None = None,
     config: PipelineConfig | None = None,
 ) -> SegmentationResult:
-    """Enhance images and generate masks for later inspection."""
+    """Enhance and color-normalize golden and aligned test images.
+
+    This task does not perform segmentation. Segmentation masks are returned as
+    None because later pipeline stages are responsible for region extraction.
+    """
+
+    _ = roi_map
 
     golden = _ensure_color(golden_image)
     test = _ensure_color(aligned_test_image)
@@ -235,98 +159,24 @@ def enhance_and_segment(
         enhanced_golden,
     )
 
-    active_config = config or PipelineConfig()
-    frequency_denoised_test = normalized_test
-    frequency_notch_mask = None
-    notch_metadata: dict[str, object] = {
-        "enabled": active_config.enable_frequency_notch_filter,
-        "active": False,
-        "selected_peak_count": 0,
-    }
-    if active_config.enable_frequency_notch_filter:
-        frequency_denoised_test, notch_metadata, frequency_notch_mask = suppress_reference_periodic_noise(
-            enhanced_golden,
-            normalized_test,
-            min_radius_ratio=active_config.frequency_notch_min_radius_ratio,
-            max_radius_ratio=active_config.frequency_notch_max_radius_ratio,
-            peak_sigma=active_config.frequency_notch_peak_sigma,
-            notch_radius=active_config.frequency_notch_radius,
-            max_peaks=active_config.frequency_notch_max_peaks,
-        )
-
-    board_mask = _create_board_mask(frequency_denoised_test)
-    component_mask = _create_component_mask(frequency_denoised_test)
-    solder_mask = _create_solder_mask(frequency_denoised_test)
-
-    frequency_spectrum = None
-    frequency_highpass = None
-    frequency_bandpass = None
-    frequency_bandpass_difference = None
-    if active_config.enable_frequency_debug:
-        gray_golden_for_frequency = cv2.cvtColor(enhanced_golden, cv2.COLOR_BGR2GRAY)
-        gray_for_frequency = cv2.cvtColor(frequency_denoised_test, cv2.COLOR_BGR2GRAY)
-        frequency_spectrum = log_magnitude_spectrum(gray_for_frequency)
-        frequency_highpass = apply_frequency_filter(
-            gray_for_frequency,
-            filter_name="highpass",
-            cutoff=0.08,
-        )
-        frequency_bandpass = apply_frequency_filter(
-            gray_for_frequency,
-            filter_name="bandpass",
-            cutoff=0.22,
-        )
-        frequency_bandpass_difference = frequency_difference_image(
-            gray_golden_for_frequency,
-            gray_for_frequency,
-            filter_name="bandpass",
-            cutoff=0.22,
-        )
-
-    component_mask, solder_mask = _apply_roi_constraints(
-        component_mask,
-        solder_mask,
-        roi_map,
-    )
-
     metadata = {
         "status": "completed",
+        "task": "enhancement_and_color_normalization",
         "methods": [
             "CLAHE on LAB luminance channel",
-            "bilateral filtering",
-            "histogram matching",
-            "Otsu thresholding",
-            "Canny edge detection",
-            "HSV solder-color segmentation",
-            "FFT log-magnitude spectrum visualization",
-            "FFT high-pass filtering for edge/fine-detail emphasis",
-            "FFT band-pass filtering for component and solder detail emphasis",
-            "FFT band-pass golden/test difference map",
-            "FFT notch filtering for repetitive periodic-noise suppression",
-            "morphological opening and closing",
+            "bilateral filtering for edge-preserving denoising",
+            "per-channel histogram matching",
         ],
-        "frequency_domain": {
-            "enabled": active_config.enable_frequency_debug,
-            "notch_filter": notch_metadata,
-            "highpass_cutoff": 0.08,
-            "bandpass_cutoff": 0.22,
-            "purpose": "suppress periodic noise, show fine detail, suppress low-frequency background, and expose local detail changes",
-        },
-        "has_roi_map": roi_map is not None,
-        "debug": active_config.debug,
+        "segmentation_performed": False,
+        "masks_returned": False,
+        "debug": False if config is None else config.debug,
     }
 
     return SegmentationResult(
         enhanced_golden_image=enhanced_golden,
-        enhanced_test_image=frequency_denoised_test,
-        board_mask=board_mask,
-        component_mask=component_mask,
-        solder_mask=solder_mask,
-        frequency_denoised_test_image=frequency_denoised_test,
-        frequency_notch_mask_image=frequency_notch_mask,
-        frequency_spectrum_image=frequency_spectrum,
-        frequency_highpass_image=frequency_highpass,
-        frequency_bandpass_image=frequency_bandpass,
-        frequency_bandpass_difference_image=frequency_bandpass_difference,
+        enhanced_test_image=normalized_test,
+        board_mask=None,
+        component_mask=None,
+        solder_mask=None,
         metadata=metadata,
     )

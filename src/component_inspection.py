@@ -1,4 +1,4 @@
-"""Task 3: component-level inspection."""
+"""Task 4: component-level inspection."""
 
 from __future__ import annotations
 
