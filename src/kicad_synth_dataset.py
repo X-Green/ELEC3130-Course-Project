@@ -33,6 +33,10 @@ DEFAULT_BOARD_SOURCES = {
     "board02": Path(r"E:\LightSkin\demo-rec-2004.00685-sensorboard\demo-rec-2004.00685-sensorboard.kicad_pcb"),
     "board03": Path(r"E:\Matrice4D-NewBattery-HolderPCB\Matrice4D-NewBattery-HolderPCB.kicad_pcb"),
     "board04": Path(r"E:\X-Tray-Dev-Board\ProPrj_XTray-PCB - v3.0_2025-06-02.kicad_pcb"),
+    "board05": Path(r"E:\RM2024-SuperCapacitorController\hardware\SuperCap2024_Power_V1.2R\SuperCap2024V1.2R_Power.kicad_pcb"),
+    "board06": Path(r"E:\RM2024-SuperCapacitorController\hardware\SuperCap2024_Control_V1.1R_F3_ISOPWR\SuperCap2024Control_V1.1R_F3_ISOPWR.kicad_pcb"),
+    "board07": Path(r"E:\ELEC3300-Maglev-Project-2025\maglev2025_hardware_test1\maglev2025_hardware_test1.kicad_pcb"),
+    "board08": Path(r"E:\ELEC3300-Maglev-Project-2025\maglev2025_hardware_test2\maglev2025_hardware_test2.kicad_pcb"),
 }
 
 IMAGE_WIDTH = 2400
@@ -44,7 +48,12 @@ CAMERA_VARIANTS = (
     {"name": "rotated_5deg", "zoom": "0.85", "rotate": "0,0,5"},
     {"name": "shift_rotate", "zoom": "0.85", "pan": "0.8,-0.6,0", "rotate": "0,0,-4"},
 )
-DEFECT_FREE_VARIANT_TYPES = {"registration_background", "enhancement_stress"}
+DEFECT_FREE_VARIANT_TYPES = {
+    "registration_background",
+    "enhancement_stress",
+    "badly_disturbed",
+    "slightly_disturbed",
+}
 ENHANCEMENT_STRESS_VARIANTS = (
     {
         "name": "low_contrast",

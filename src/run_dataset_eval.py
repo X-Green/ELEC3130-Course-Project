@@ -200,7 +200,7 @@ def _filter_predictions_for_evaluation(
     if variant_type in {"registration_background", "enhancement_stress"}:
         return [prediction for prediction in predictions if prediction.source == "component_inspection"]
 
-    if variant_type in {"missing_component", "shifted_component", "rotated_component"}:
+    if variant_type in {"missing_component", "shifted_component", "rotated_component", "visual_component_mismatch"}:
         accepted = {"missing_component", "shifted_component", "rotated_component", "visual_component_mismatch"}
         return [prediction for prediction in predictions if prediction.defect_type in accepted]
 
